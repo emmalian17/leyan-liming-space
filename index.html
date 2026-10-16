@@ -415,10 +415,11 @@ dialog.lb button{position:absolute;top:10px;right:10px;width:40px;height:40px;bo
         <h3>綠植與魚池，<br>走進門前先慢下來</h3>
         <p>入口前兩棵庭樹撐起一片樹蔭，木棧板旁擺著盆栽，魚池就在綠意之間。池水的過濾、打氣與照明都由 AI 監測，植栽依土壤濕度自動澆灌。</p>
         <p class="demo-note" id="garden-note">互動示意，非實際設備控制。效果與狀態皆為模擬，未連接感測器；與上方 AI 情境展示獨立操作。</p><div class="chips" role="group" aria-label="庭園互動示意" aria-describedby="garden-note"><button type="button" data-garden="irrigation" aria-pressed="false" aria-controls="garden-status pond-box"><span>自動澆灌</span><small aria-hidden="true">關閉</small></button><button type="button" data-garden="monitor" aria-pressed="false" aria-controls="garden-status pond-box"><span>水質監測</span><small aria-hidden="true">關閉</small></button><button type="button" data-garden="circulation" aria-pressed="false" aria-controls="garden-status pond-box"><span>夜間循環</span><small aria-hidden="true">關閉</small></button><button type="button" data-garden="lighting" aria-pressed="false" aria-controls="garden-status pond-box"><span>景觀照明</span><small aria-hidden="true">關閉</small></button></div><div id="garden-status" class="garden-status" role="status" aria-live="polite" aria-atomic="true">四項示意皆已關閉。可分別開啟，亦可同時體驗。</div>
-        <p class="fed">點擊池面撒飼料，錦鯉會游過來。已餵食 <b id="fed">0</b> 次</p>
+        <p class="fed">點擊池面撒飼料，錦鯉會游過來。本輪已餵食 <b id="fed">0</b> / 10 次；第 3 次起會逐漸變胖，吃飽後休息三分鐘。</p>
+        <p id="pond-feed-status" class="demo-note" role="status" aria-live="polite" aria-atomic="true">有的魚在游泳，有的正在打盹 zzz。</p>
       </div>
       <div class="pond-visual">
-      <div class="pond-canvas" id="pond-box">
+      <div class="pond-canvas" id="pond-box" role="button" tabindex="0" aria-label="餵食錦鯉" aria-describedby="pond-feed-status">
         <canvas id="pond-cv" role="img" aria-label="互動魚池：點擊池面，錦鯉會游向點擊處"></canvas>
         <span class="garden-rain" aria-hidden="true"></span><span class="garden-current" aria-hidden="true"></span><span class="garden-glow" aria-hidden="true"></span>
         <span class="hint" id="pond-hint">點一下池面餵魚</span>
@@ -573,17 +574,53 @@ dialog.lb button{position:absolute;top:10px;right:10px;width:40px;height:40px;bo
   /* interactive koi pond */
   var box=$("pond-box"),pc=$("pond-cv"),px=pc.getContext("2d"),ps=sizeCv(pc);
   var koi=[["#e8743b","#f6f1e7",1],["#f6f1e7","#d9452b",.85],["#e9a23b","#f6f1e7",.9],["#f6f1e7","#2a2a2a",.72],["#d9452b","#f6f1e7",.8]].map(function(k,i){
-    return{c:k[0],s:k[1],sz:k[2],x:.2+.15*i,y:.5+.1*Math.sin(i*2),vx:0,vy:0,tx:Math.random(),ty:.35+Math.random()*.5,ph:i*1.7}});
-  var ripples=[],food=null,fedN=0,feedFrame=0; function animateFeed(t){feedFrame=0;pondStep(t);if(food||ripples.length)feedFrame=requestAnimationFrame(animateFeed);}
+    return{c:k[0],s:k[1],sz:k[2],x:.2+.15*i,y:.5+.1*Math.sin(i*2),vx:0,vy:0,tx:Math.random(),ty:.35+Math.random()*.5,ph:i*1.7,sleeping:false}});
+  var ripples=[],food=null,fedN=0,fullUntil=0,lastFedAt=0,lastPondTime=0;
+  var cooldownMs=180000,storageKey="leyan-pond-feeding-v1";
+  var feedStatus=$("pond-feed-status"),fullMessage="目前吃飽了請三分鐘後再餵食!";
+  // Storage is optional: blocked/private storage must not break feeding.
+  try{
+    var saved=JSON.parse(localStorage.getItem(storageKey));
+    if(saved&&Number.isInteger(saved.count)&&saved.count>=0&&saved.count<=10&&
+      Number.isFinite(saved.lastFedAt)&&saved.lastFedAt<=Date.now()&&
+      Number.isFinite(saved.fullUntil)&&saved.fullUntil>=0&&saved.fullUntil<=Date.now()+cooldownMs&&
+      (saved.count!==10||saved.fullUntil>0)){
+      fedN=saved.count;lastFedAt=saved.lastFedAt;fullUntil=saved.fullUntil;
+    }
+  }catch(ignore){}
+  function saveFeeding(){try{localStorage.setItem(storageKey,JSON.stringify({count:fedN,lastFedAt:lastFedAt,fullUntil:fullUntil}))}catch(ignore){}}
+  function refreshFeeding(){
+    var now=Date.now();
+    if((fullUntil&&now>=fullUntil)||(!fullUntil&&fedN&&now-lastFedAt>=cooldownMs)){
+      fedN=0;fullUntil=0;lastFedAt=0;saveFeeding();
+    }
+    $("fed").textContent=fedN;
+    var remaining=Math.max(0,Math.ceil((fullUntil-now)/1000));
+    var status=remaining?"錦鯉吃飽休息中，還有 "+remaining+" 秒可再餵食。":
+      "有的魚在游泳，有的正在打盹 zzz。點擊池面即可餵食。";
+    if(feedStatus.textContent!==status)feedStatus.textContent=status;
+    box.setAttribute("aria-disabled",remaining?"true":"false");
+  }
+  refreshFeeding();setInterval(refreshFeeding,1000);
   var pads=[[.12,.3,.07],[.86,.36,.06],[.8,.86,.08],[.18,.84,.05],[.5,.2,.045]];
-  box.addEventListener("click",function(e){
-    var r=pc.getBoundingClientRect(),x=(e.clientX-r.left)/r.width,y=(e.clientY-r.top)/r.height;
+  function feedPond(e){
+    refreshFeeding();
+    if(fullUntil>Date.now()){window.alert(fullMessage);return}
+    var r=pc.getBoundingClientRect(),x=e.clientX==null?.5:(e.clientX-r.left)/r.width,y=e.clientY==null?.55:(e.clientY-r.top)/r.height;
     food={x:x,y:y,t:performance.now(),bits:[0,1,2,3,4,5].map(function(){return{dx:(Math.random()-.5)*.05,dy:(Math.random()-.5)*.05}})};
+    koi.forEach(function(k){k.sleeping=false});
     ripples.push({x:x,y:y,r:0});ripples.push({x:x,y:y,r:-18});if(ripples.length>40)ripples.splice(0,ripples.length-40);
-    $("fed").textContent=++fedN;$("pond-hint").style.opacity=0;if(reduce&&!feedFrame)feedFrame=requestAnimationFrame(animateFeed);
-  });
+    fedN++;lastFedAt=Date.now();if(fedN===10)fullUntil=lastFedAt+cooldownMs;
+    saveFeeding();refreshFeeding();$("pond-hint").style.opacity=0;
+  }
+  box.addEventListener("click",feedPond);
+  box.addEventListener("keydown",function(e){if(e.key==="Enter"||e.key===" "){e.preventDefault();feedPond({})}});
   function pondStep(t){
+    var dt=lastPondTime?Math.min(6,Math.max(0,(t-lastPondTime)/(1000/60))):1;lastPondTime=t;
     var w=ps.w,h=ps.h,sc=w/520;
+    // Bounded body-width growth digests naturally over three minutes.
+    var digestion=Math.max(0,1-(Date.now()-lastFedAt)/cooldownMs);
+    var fullness=Math.max(0,fedN-2)*digestion;
     var g=px.createRadialGradient(w*.5,h*.45,10,w*.5,h*.55,w*.75);
     g.addColorStop(0,"#4f8f93");g.addColorStop(.6,"#2f6670");g.addColorStop(1,"#1d454c");
     px.fillStyle=g;px.fillRect(0,0,w,h);
@@ -595,15 +632,17 @@ dialog.lb button{position:absolute;top:10px;right:10px;width:40px;height:40px;bo
     if(food&&!feeding)food=null;
     // food pellets
     if(feeding){px.fillStyle="#c79a5a";food.bits.forEach(function(b){px.beginPath();px.arc((food.x+b.dx)*w,(food.y+b.dy)*h,2.6*sc,0,Math.PI*2);px.fill()})}
-    koi.forEach(function(k){
+    koi.forEach(function(k,i){
+      // Only two of five fish nap. At least three always swim.
+      k.sleeping=!feeding&&(i===1||i===3)&&Math.floor(t/18000+i)%3!==0;
       var tx=feeding?food.x:k.tx,ty=feeding?food.y:k.ty;
       var dx=tx-k.x,dy=(ty-k.y)*h/w,d=Math.hypot(dx,dy)||1;
       if(!feeding&&d<.05){k.tx=.1+Math.random()*.8;k.ty=.25+Math.random()*.65}
-      var sp=(feeding?.0042:.0014)*(feeding&&d<.05?.2:1);
-      k.vx+=(dx/d*sp-k.vx)*.03;k.vy+=(dy/d*sp-k.vy)*.03;
-      k.x+=k.vx;k.y+=k.vy*w/h;
-      var ang=Math.atan2(k.vy,k.vx),L=48*k.sz*sc,bw=L*.32,wag=Math.sin(t*.008+k.ph)*(.25+Math.hypot(k.vx,k.vy)*120);
-      px.save();px.translate(k.x*w,k.y*h);px.rotate(ang);
+      var sp=(feeding?.0042:k.sleeping?.00009:.0014)*(feeding&&d<.05?.2:1)*(reduce?.35:1);
+      var ease=1-Math.pow(.97,dt);k.vx+=(dx/d*sp-k.vx)*ease;k.vy+=(dy/d*sp-k.vy)*ease;
+      k.x+=k.vx*dt;k.y+=k.vy*w/h*dt;
+      var ang=Math.atan2(k.vy,k.vx),L=48*k.sz*sc*(1+fullness*.025),bw=48*k.sz*sc*.32*(1+fullness*.13),wag=Math.sin(t*(k.sleeping||reduce?.002:.008)+k.ph)*(k.sleeping?.08:.25+Math.hypot(k.vx,k.vy)*120);
+      px.save();px.translate(k.x*w,k.y*h+Math.sin(t*.0015+k.ph)*(k.sleeping?2:0)*sc);px.rotate(ang);
       px.fillStyle="rgba(10,30,30,.25)";px.beginPath();px.ellipse(-4,9,L*.5,bw*.5,0,0,Math.PI*2);px.fill();
       px.save();px.translate(-L*.42,0);px.rotate(wag);px.fillStyle=k.c;px.globalAlpha=.85;
       px.beginPath();px.moveTo(0,0);px.quadraticCurveTo(-L*.35,-bw*.9,-L*.42,-bw*.2);px.quadraticCurveTo(-L*.3,0,-L*.42,bw*.2);px.quadraticCurveTo(-L*.35,bw*.9,0,0);px.fill();px.restore();
@@ -611,8 +650,12 @@ dialog.lb button{position:absolute;top:10px;right:10px;width:40px;height:40px;bo
       px.fillStyle=k.s;px.beginPath();px.ellipse(L*.08,-bw*.05,L*.18,bw*.3,.3,0,Math.PI*2);px.fill();
       px.fillStyle=k.c;px.globalAlpha=.7;px.beginPath();px.ellipse(L*.1,bw*.55,L*.12,bw*.2,.6,0,Math.PI*2);px.ellipse(L*.1,-bw*.55,L*.12,bw*.2,-.6,0,Math.PI*2);px.fill();px.globalAlpha=1;
       px.restore();
+      if(k.sleeping){
+        px.save();px.fillStyle="#f0f6ee";px.font="600 "+Math.max(12,15*sc)+"px sans-serif";
+        px.fillText("zzz",k.x*w+L*.3,k.y*h-bw-5*sc+Math.sin(t*.0015+k.ph)*2*sc);px.restore();
+      }
     });
-    ripples=ripples.filter(function(r){r.r+=1.1;return r.r<90});
+    ripples=ripples.filter(function(r){r.r+=1.1*dt;return r.r<90});
     ripples.forEach(function(r){if(r.r<0)return;px.strokeStyle="rgba(240,255,250,"+(1-r.r/90)*.6+")";px.lineWidth=1.5;px.beginPath();px.ellipse(r.x*w,r.y*h,r.r*sc,r.r*.55*sc,0,0,Math.PI*2);px.stroke()});
     pads.forEach(function(p,i){
       var x=(p[0]+Math.sin(t*.0003+i)*.006)*w,y=p[1]*h,r=p[2]*w;
@@ -622,7 +665,7 @@ dialog.lb button{position:absolute;top:10px;right:10px;width:40px;height:40px;bo
   }
 
   window.addEventListener("resize",function(){ls=sizeCv(lc);cs=sizeCv(cc);ps=sizeCv(pc);if(reduce){drawLeaves(0);drawMotes(0);pondStep(performance.now())}});
-  if(reduce){drawLeaves(0);drawMotes(0);pondStep(performance.now())}
+  if(reduce){drawLeaves(0);drawMotes(0);pondStep(performance.now());setInterval(function(){pondStep(performance.now())},1000/12)}
   else{(function loop(t){drawLeaves(t);drawMotes(t);pondStep(t);requestAnimationFrame(loop)})(0)}
 })();
 </script>
